@@ -74,10 +74,10 @@ SPEAKER = "TM:cpwrmn5kwh97"
 MODEL = "gpt-4"
 OUTPUT = os.path.join(os.getcwd(), "videos")
 
-APP_ID = os.environ["APP_ID"]
-APP_SECRET = os.environ["APP_SECRET"]
-USER_SCOPE = [AuthScope.CHAT_READ, AuthScope.CHAT_EDIT]
-TARGET_CHANNEL = os.environ["TARGET_CHANNEL"]
+TWITCH_APP_ID = os.environ["TWITCH_APP_ID"]
+TWITCH_APP_SECRET = os.environ["TWITCH_APP_SECRET"]
+TWITCH_USER_SCOPE = [AuthScope.CHAT_READ, AuthScope.CHAT_EDIT]
+TWITCH_TARGET_CHANNEL = os.environ["TWITCH_TARGET_CHANNEL"]
 FAKEYOU_USERNAME = os.environ["FAKEYOU_USERNAME"]
 FAKEYOU_PASSWORD = os.environ["FAKEYOU_PASSWORD"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
@@ -693,7 +693,7 @@ async def run_bot():
     await setup_obs(client)
 
     async def on_ready(ready_event: EventData):
-        await ready_event.chat.join_room(TARGET_CHANNEL)
+        await ready_event.chat.join_room(TWITCH_TARGET_CHANNEL)
         logger.info("Bot is ready for work, joining channels")
 
     async def present_command(cmd: ChatCommand):
@@ -745,10 +745,10 @@ async def run_bot():
     presentation_task = asyncio.create_task(presentation_task())
     random_presentation_task = asyncio.create_task(random_presentation())
 
-    twitch = await Twitch(APP_ID, APP_SECRET)
-    auth = UserAuthenticator(twitch, USER_SCOPE)
+    twitch = await Twitch(TWITCH_APP_ID, TWITCH_APP_SECRET)
+    auth = UserAuthenticator(twitch, TWITCH_USER_SCOPE)
     token, refresh_token = await auth.authenticate()
-    await twitch.set_user_authentication(token, USER_SCOPE, refresh_token)
+    await twitch.set_user_authentication(token, TWITCH_USER_SCOPE, refresh_token)
 
     chat = await Chat(twitch)
 

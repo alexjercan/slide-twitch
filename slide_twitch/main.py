@@ -17,10 +17,29 @@ from twitchAPI import Twitch
 from twitchAPI.chat import Chat, ChatCommand, EventData
 from twitchAPI.oauth import UserAuthenticator
 from twitchAPI.types import AuthScope, ChatEvent
+from rich.logging import RichHandler
+from logging.handlers import QueueHandler, QueueListener
+import queue
+from typing import Any
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+LOG_LEVEL = os.getenv("APPLICATION_LOG_LEVEL", "DEBUG")
+LOG_FILE = os.getenv("APPLICATION_LOG_FILE", "app.log")
+
+log_queue: queue.Queue[Any] = queue.Queue(-1)
+queue_handler = QueueHandler(log_queue)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging._nameToLevel[LOG_LEVEL])
+logger.addHandler(queue_handler)
+
+rich_handler = RichHandler()
+file_handler = logging.FileHandler(LOG_FILE)
+file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+
+queue_listener = QueueListener(log_queue, file_handler, rich_handler)
+queue_listener.start()
 
 SYSTEM = """Your job is to create a slide presentation for a video. \
 In this presentation you must include a speech for the current slide and a \
@@ -110,7 +129,7 @@ def create_video(output: str):
     ValueError
         If the number of image and audio files is not the same
     """
-    logging.debug("Creating video...")
+    logger.debug("Creating video...")
 
     image_files = sorted(glob.glob(os.path.join(output, "slide_*.png")))
     audio_files = sorted(glob.glob(os.path.join(output, "slide_*.wav")))
@@ -164,7 +183,7 @@ def create_srt(output: str):
     output : str
         The output directory to use for the files
     """
-    logging.debug("Creating srt...")
+    logger.debug("Creating srt...")
 
     audio_files = sorted(glob.glob(os.path.join(output, "slide_*.wav")))
 
@@ -233,7 +252,7 @@ def create_vtt(output: str):
     output : str
         The output directory to use for the files
     """
-    logging.debug("Creating vtt...")
+    logger.debug("Creating vtt...")
 
     audio_files = sorted(glob.glob(os.path.join(output, "slide_*.wav")))
 
@@ -293,16 +312,16 @@ def create_slides(
     output : str, optional
         The output directory to use for the files, by default os.path.curdir
     """
-    logging.debug("Creating slides...")
+    logger.debug("Creating slides...")
 
     fk_you = fakeyou.FakeYou()
 
     try:
         fk_you.login(username=FAKEYOU_USERNAME, password=FAKEYOU_PASSWORD)
     except fakeyou.exception.InvalidCredentials:
-        logging.warning("Invalid login credentials for FakeYou")
+        logger.warning("Invalid login credentials for FakeYou")
     except fakeyou.exception.TooManyRequests:
-        logging.error("Too many requests for FakeYou")
+        logger.error("Too many requests for FakeYou")
 
     with open(
         os.path.join(output, "prompt.txt"), "w", encoding="utf-8"
@@ -433,14 +452,14 @@ async def run():
 
     async def on_ready(ready_event: EventData):
         await ready_event.chat.join_room(TARGET_CHANNEL)
-        logging.info("Bot is ready for work, joining channels")
+        logger.info("Bot is ready for work, joining channels")
 
     async def present_command(cmd: ChatCommand):
         if len(cmd.parameter) == 0:
             await cmd.reply("You need to specify a message to present!")
         elif presentations.full():
             await cmd.reply("Presentation queue is full, try again later!")
-            logging.warning(
+            logger.warning(
                 f"Presentation queue is full, {cmd.user.name} skipped"
             )
         else:
@@ -450,7 +469,7 @@ async def run():
                 "Presentation queued!"
                 f"{cmd.user.name} will present '{cmd.parameter}' next!"
             )
-            logging.info(f"Video queued for {cmd.user.name} with run {run}...")
+            logger.info(f"Video queued for {cmd.user.name} with run {run}...")
 
             output = os.path.join(OUTPUT, str(run))
 
@@ -461,7 +480,7 @@ async def run():
         while True:
             run = await presentations.get()
 
-            logging.info(f"Starting presentation for run {run}...")
+            logger.info(f"Starting presentation for run {run}...")
 
             path = os.path.join(OUTPUT, str(run), "video.mp4")
 

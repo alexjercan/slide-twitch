@@ -15,6 +15,7 @@ ffmpeg-python = "^0.2.0"
 tqdm = "^4.66.1"
 wave = "^0.0.2"
 obsws-python = "^1.6.0"
+rich = "^13.5.3"
 
 [tool.poetry.group.dev.dependencies]
 isort = "^5.12.0"

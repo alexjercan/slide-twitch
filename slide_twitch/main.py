@@ -1,4 +1,3 @@
-import obsws_python as obs
 import asyncio
 import concurrent.futures
 import glob
@@ -10,6 +9,7 @@ import wave
 
 import fakeyou
 import ffmpeg
+import obsws_python as obs
 import openai
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -110,7 +110,7 @@ def create_video(output: str):
     ValueError
         If the number of image and audio files is not the same
     """
-    logging.info("Creating video...")
+    logging.debug("Creating video...")
 
     image_files = sorted(glob.glob(os.path.join(output, "slide_*.png")))
     audio_files = sorted(glob.glob(os.path.join(output, "slide_*.wav")))
@@ -126,6 +126,7 @@ def create_video(output: str):
     ffmpeg.concat(*input_streams, v=1, a=1).output(
         os.path.join(output, "video.mp4"),
         pix_fmt="yuv420p",
+        loglevel="quiet",
     ).overwrite_output().run()
 
 
@@ -163,7 +164,7 @@ def create_srt(output: str):
     output : str
         The output directory to use for the files
     """
-    logging.info("Creating srt...")
+    logging.debug("Creating srt...")
 
     audio_files = sorted(glob.glob(os.path.join(output, "slide_*.wav")))
 
@@ -232,7 +233,7 @@ def create_vtt(output: str):
     output : str
         The output directory to use for the files
     """
-    logging.info("Creating vtt...")
+    logging.debug("Creating vtt...")
 
     audio_files = sorted(glob.glob(os.path.join(output, "slide_*.wav")))
 
@@ -292,7 +293,7 @@ def create_slides(
     output : str, optional
         The output directory to use for the files, by default os.path.curdir
     """
-    logging.info("Creating slides...")
+    logging.debug("Creating slides...")
 
     fk_you = fakeyou.FakeYou()
 
@@ -301,7 +302,7 @@ def create_slides(
     except fakeyou.exception.InvalidCredentials:
         logging.warning("Invalid login credentials for FakeYou")
     except fakeyou.exception.TooManyRequests:
-        logging.warning("Too many requests for FakeYou")
+        logging.error("Too many requests for FakeYou")
 
     with open(
         os.path.join(output, "prompt.txt"), "w", encoding="utf-8"
@@ -354,8 +355,8 @@ def create_slides(
             progress.update(1)
 
 
-def slide_gen(cmd: ChatCommand) -> int:
-    """ Generate the slides for the presentation
+def slide_gen(prompt: str, output: str):
+    """Generate the slides for the presentation
 
     Wrapper function for create_slides. This function will create the slides
     using the user prompt and the system prompt. The function returns the run
@@ -363,31 +364,19 @@ def slide_gen(cmd: ChatCommand) -> int:
 
     Parameters
     ----------
-    cmd : ChatCommand
-        The command to use for the user prompt
-
-    Returns
-    -------
-    int
-        The run number
+    prompt : str
+        The user prompt to use
+    output : str
+        The output directory to use for the files
     """
-    run = get_output_run()
-
-    logging.info(f"Video queued for {cmd.user.name} with run {run}...")
-
-    output = os.path.join(OUTPUT, str(run))
-
-    create_slides(cmd.parameter, output=output)
-
+    create_slides(prompt, output=output)
     create_srt(output)
     create_vtt(output)
     create_video(output)
 
-    return run
 
-
-async def slide_gen_task(cmd: ChatCommand, presentations: asyncio.Queue):
-    """ Generate the slides for the presentation
+async def slide_gen_task(cmd: ChatCommand, output: str):
+    """Generate the slides for the presentation
 
     Async wrapper for slide_gen.
 
@@ -395,15 +384,13 @@ async def slide_gen_task(cmd: ChatCommand, presentations: asyncio.Queue):
     ----------
     cmd : ChatCommand
         The command to use for the user prompt
-    presentations : asyncio.Queue
-        The queue to use for the presentations
+    output : str
+        The output directory to use for the files
     """
     loop = asyncio.get_event_loop()
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        run = await loop.run_in_executor(executor, slide_gen, cmd)
-
-    await presentations.put(run)
+        await loop.run_in_executor(executor, slide_gen, cmd.parameter, output)
 
 
 async def run():
@@ -423,15 +410,26 @@ async def run():
         password=OBS_WEBSOCKET_PASSWORD,
     )
 
-    client.set_input_settings(
-        "VLC Video Source",
-        settings={
-            "loop": False,
-            "playlist": [],
-            "subtitle_enable": True,
-        },
-        overlay=False,
-    )
+    result = client.get_scene_list()
+    scenes = result.scenes
+    if "Presentation" in [scene["sceneName"] for scene in scenes]:
+        client.remove_scene("Presentation")
+
+    # Needed to wait for OBS to update the scene list... UGH!
+    await asyncio.sleep(0.1)
+
+    client.create_scene("Presentation")
+
+    client.create_input("Presentation", "VLC Video Source", "vlc_source", {
+        "loop": False,
+        "playlist": [],
+        "subtitle_enable": True,
+    }, True)
+
+    client.set_current_program_scene("Presentation")
+
+    client.set_input_mute("Mic/Aux", True)
+    client.set_input_mute("Desktop Audio", True)
 
     async def on_ready(ready_event: EventData):
         await ready_event.chat.join_room(TARGET_CHANNEL)
@@ -442,14 +440,22 @@ async def run():
             await cmd.reply("You need to specify a message to present!")
         elif presentations.full():
             await cmd.reply("Presentation queue is full, try again later!")
-            logging.warning(f"Presentation queue is full, {cmd.user.name} skipped")
+            logging.warning(
+                f"Presentation queue is full, {cmd.user.name} skipped"
+            )
         else:
+            run = get_output_run()
+
             await cmd.reply(
                 "Presentation queued!"
                 f"{cmd.user.name} will present '{cmd.parameter}' next!"
             )
+            logging.info(f"Video queued for {cmd.user.name} with run {run}...")
 
-            await slide_gen_task(cmd, presentations)
+            output = os.path.join(OUTPUT, str(run))
+
+            await slide_gen_task(cmd, output)
+            await presentations.put(run)
 
     async def presentation_task():
         while True:
@@ -459,23 +465,23 @@ async def run():
 
             path = os.path.join(OUTPUT, str(run), "video.mp4")
 
-            response = client.get_input_settings("VLC Video Source")
-            playlist = response.input_settings.get("playlist", [])
-            playlist.append(
-                {
-                    "hidden": False,
-                    "selected": False,
-                    "value": path,
-                }
-            )
-
             client.set_input_settings(
                 "VLC Video Source",
                 settings={
-                    "playlist": playlist,
+                    "playlist": [
+                        {
+                            "hidden": False,
+                            "selected": False,
+                            "value": path,
+                        }
+                    ],
                 },
                 overlay=True,
             )
+
+            probe = ffmpeg.probe(path)
+            duration = float(probe["format"]["duration"])
+            await asyncio.sleep(duration)
 
             presentations.task_done()
 

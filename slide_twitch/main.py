@@ -4,23 +4,23 @@ import glob
 import json
 import logging
 import os
+import queue
 import urllib.request
 import wave
+from logging.handlers import QueueHandler, QueueListener
+from typing import Any
 
 import fakeyou
 import ffmpeg
 import obsws_python as obs
 import openai
 from dotenv import load_dotenv
+from rich.logging import RichHandler
 from tqdm import tqdm
 from twitchAPI import Twitch
 from twitchAPI.chat import Chat, ChatCommand, EventData
 from twitchAPI.oauth import UserAuthenticator
 from twitchAPI.types import AuthScope, ChatEvent
-from rich.logging import RichHandler
-from logging.handlers import QueueHandler, QueueListener
-import queue
-from typing import Any
 
 load_dotenv()
 
@@ -36,7 +36,9 @@ logger.addHandler(queue_handler)
 
 rich_handler = RichHandler()
 file_handler = logging.FileHandler(LOG_FILE)
-file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+)
 
 queue_listener = QueueListener(log_queue, file_handler, rich_handler)
 queue_listener.start()
@@ -439,11 +441,17 @@ async def run():
 
     client.create_scene("Presentation")
 
-    client.create_input("Presentation", "VLC Video Source", "vlc_source", {
-        "loop": False,
-        "playlist": [],
-        "subtitle_enable": True,
-    }, True)
+    client.create_input(
+        "Presentation",
+        "VLC Video Source",
+        "vlc_source",
+        {
+            "loop": False,
+            "playlist": [],
+            "subtitle_enable": True,
+        },
+        True,
+    )
 
     client.set_current_program_scene("Presentation")
 

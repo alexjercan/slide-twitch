@@ -1,12 +1,12 @@
-import concurrent.futures
+import obsws_python as obs
 import asyncio
+import concurrent.futures
 import glob
 import json
 import logging
 import os
 import urllib.request
 import wave
-from typing import Tuple
 
 import fakeyou
 import ffmpeg
@@ -53,7 +53,7 @@ Make sure to output only JSON text. Do not output any extra comments.
 """
 SPEAKER = "TM:cpwrmn5kwh97"
 MODEL = "gpt-4"
-OUTPUT = "videos"
+OUTPUT = os.path.join(os.getcwd(), "videos")
 
 APP_ID = os.environ["APP_ID"]
 APP_SECRET = os.environ["APP_SECRET"]
@@ -62,9 +62,12 @@ TARGET_CHANNEL = os.environ["TARGET_CHANNEL"]
 FAKEYOU_USERNAME = os.environ["FAKEYOU_USERNAME"]
 FAKEYOU_PASSWORD = os.environ["FAKEYOU_PASSWORD"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+OBS_WEBSOCKET_IP = os.environ["OBS_WEBSOCKET_IP"]
+OBS_WEBSOCKET_PORT = os.environ["OBS_WEBSOCKET_PORT"]
+OBS_WEBSOCKET_PASSWORD = os.environ["OBS_WEBSOCKET_PASSWORD"]
 
 
-def get_output_run(output: str = OUTPUT) -> Tuple[str, str]:
+def get_output_run(output: str = OUTPUT) -> int:
     """Create a new folder inside the output directory for this run
 
     Parameters
@@ -74,8 +77,8 @@ def get_output_run(output: str = OUTPUT) -> Tuple[str, str]:
 
     Returns
     -------
-    Tuple[str, str]
-        The path to the run directory and the run number
+    int
+        The run number
     """
     if not os.path.exists(output):
         os.mkdir(output)
@@ -85,9 +88,10 @@ def get_output_run(output: str = OUTPUT) -> Tuple[str, str]:
         run += 1
 
     run_path = os.path.join(output, str(run))
+    assert not os.path.exists(run_path), "Run path already exists"
     os.mkdir(run_path)
 
-    return run_path, str(run)
+    return run
 
 
 def create_video(output: str):
@@ -350,10 +354,28 @@ def create_slides(
             progress.update(1)
 
 
-def slide_gen(cmd: ChatCommand) -> str:
-    output, run = get_output_run()
+def slide_gen(cmd: ChatCommand) -> int:
+    """ Generate the slides for the presentation
+
+    Wrapper function for create_slides. This function will create the slides
+    using the user prompt and the system prompt. The function returns the run
+    number for the presentation.
+
+    Parameters
+    ----------
+    cmd : ChatCommand
+        The command to use for the user prompt
+
+    Returns
+    -------
+    int
+        The run number
+    """
+    run = get_output_run()
 
     logging.info(f"Video queued for {cmd.user.name} with run {run}...")
+
+    output = os.path.join(OUTPUT, str(run))
 
     create_slides(cmd.parameter, output=output)
 
@@ -365,6 +387,17 @@ def slide_gen(cmd: ChatCommand) -> str:
 
 
 async def slide_gen_task(cmd: ChatCommand, presentations: asyncio.Queue):
+    """ Generate the slides for the presentation
+
+    Async wrapper for slide_gen.
+
+    Parameters
+    ----------
+    cmd : ChatCommand
+        The command to use for the user prompt
+    presentations : asyncio.Queue
+        The queue to use for the presentations
+    """
     loop = asyncio.get_event_loop()
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -374,17 +407,42 @@ async def slide_gen_task(cmd: ChatCommand, presentations: asyncio.Queue):
 
 
 async def run():
+    """Run the bot
+
+    This function will create the bot and start it. The bot will join the
+    channel specified in the config and listen for commands. The bot will
+    respond to the `present` command. The bot will queue the presentation
+    requests and will start the presentation when the current presentation
+    finishes.
+    """
     presentations = asyncio.Queue(maxsize=5)
 
+    client = obs.ReqClient(
+        host=OBS_WEBSOCKET_IP,
+        port=OBS_WEBSOCKET_PORT,
+        password=OBS_WEBSOCKET_PASSWORD,
+    )
+
+    client.set_input_settings(
+        "VLC Video Source",
+        settings={
+            "loop": False,
+            "playlist": [],
+            "subtitle_enable": True,
+        },
+        overlay=False,
+    )
+
     async def on_ready(ready_event: EventData):
-        logging.info("Bot is ready for work, joining channels")
         await ready_event.chat.join_room(TARGET_CHANNEL)
+        logging.info("Bot is ready for work, joining channels")
 
     async def present_command(cmd: ChatCommand):
         if len(cmd.parameter) == 0:
             await cmd.reply("You need to specify a message to present!")
         elif presentations.full():
             await cmd.reply("Presentation queue is full, try again later!")
+            logging.warning(f"Presentation queue is full, {cmd.user.name} skipped")
         else:
             await cmd.reply(
                 "Presentation queued!"
@@ -399,7 +457,25 @@ async def run():
 
             logging.info(f"Starting presentation for run {run}...")
 
-            # TODO: Present the video
+            path = os.path.join(OUTPUT, str(run), "video.mp4")
+
+            response = client.get_input_settings("VLC Video Source")
+            playlist = response.input_settings.get("playlist", [])
+            playlist.append(
+                {
+                    "hidden": False,
+                    "selected": False,
+                    "value": path,
+                }
+            )
+
+            client.set_input_settings(
+                "VLC Video Source",
+                settings={
+                    "playlist": playlist,
+                },
+                overlay=True,
+            )
 
             presentations.task_done()
 
@@ -419,7 +495,10 @@ async def run():
     chat.start()
 
     try:
-        input("Press enter to stop the bot...\n")
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        pass
     finally:
         chat.stop()
         await twitch.close()

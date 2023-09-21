@@ -797,6 +797,7 @@ async def run_bot():
     finishes.
     """
     presentations = asyncio.Queue(maxsize=5)
+    play_task = [None]
 
     try:
         client = await setup_obs()
@@ -832,27 +833,38 @@ async def run_bot():
             await slide_gen_task(cmd, output)
             await presentations.put(run)
 
+    async def skip_command(cmd: ChatCommand):
+        if cmd.user.name != TWITCH_TARGET_CHANNEL:
+            return
+
+        if play_task[0] is None or play_task[0].done():
+            await cmd.reply("No presentation is currently playing!")
+            logger.warning(
+                "No presentation is currently playing, %s skipped",
+                cmd.user.name,
+            )
+        else:
+            play_task[0].cancel()
+            await cmd.reply("Presentation skipped!")
+            logger.info("Presentation skipped by %s", cmd.user.name)
+
     async def presentation_task():
         while True:
             run = await presentations.get()
 
             logger.info("Starting presentation for run %s...", run)
 
-            try:
-                await play_run(client, run)
-            except Exception:
-                logger.error("Failed to play run: %s", run)
-            finally:
-                presentations.task_done()
+            play_task[0] = asyncio.create_task(play_run(client, run))
+            play_task[0].add_done_callback(lambda _: presentations.task_done())
 
     async def random_presentation():
         while True:
-            if presentations.empty():
+            if (play_task[0] is None or play_task[0].done()) and presentations.empty():
                 run = get_random_run()
 
                 if run is not None:
                     logger.info(
-                        "Starting random presentation for run %s...", run
+                        "Queueing random presentation for run %s...", run
                     )
 
                     await presentations.put(run)
@@ -874,6 +886,7 @@ async def run_bot():
     chat.register_event(ChatEvent.READY, on_ready)
 
     chat.register_command("present", present_command)
+    chat.register_command("skip", skip_command)
 
     chat.start()
 

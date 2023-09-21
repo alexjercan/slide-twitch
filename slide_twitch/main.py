@@ -386,6 +386,8 @@ def create_script(prompt: str, output: str) -> Dict:
     Exception
         If anything else goes wrong
     """
+    logger.debug("Creating script...")
+
     response = openai.ChatCompletion.create(
         api_key=OPENAI_API_KEY,
         model=MODEL,
@@ -514,32 +516,32 @@ def create_slides(
     ) as file:
         file.write(prompt)
 
-    with Progress() as progress:
-        _ = progress.add_task("[yellow]Generating script", total=None)
+    # with Progress() as progress:
+    #     _ = progress.add_task("[yellow]Generating script", total=None)
 
-        presentation = create_script(prompt, output)
+    presentation = create_script(prompt, output)
 
-    with Progress() as progress:
-        task = progress.add_task(
-            "Creating slides...", total=2 * len(presentation)
-        )
+    # with Progress() as progress:
+    #     task = progress.add_task(
+    #         "Creating slides...", total=2 * len(presentation)
+    #     )
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = []
-            for index, slide in enumerate(presentation):
-                futures.append(
-                    executor.submit(create_image, index, slide, output)
-                )
-
-            for future in concurrent.futures.as_completed(futures):
-                _ = future.result()
-                progress.advance(task)
-
-        # TODO: Will have to make this concurrent too for speed
-        # FakeYou is kind of trash and needs to use serial requests
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
         for index, slide in enumerate(presentation):
-            create_audio(index, slide, output)
-            progress.advance(task)
+            futures.append(
+                executor.submit(create_image, index, slide, output)
+            )
+
+        for future in concurrent.futures.as_completed(futures):
+            _ = future.result()
+            # progress.advance(task)
+
+    # TODO: Will have to make this concurrent too for speed
+    # FakeYou is kind of trash and needs to use serial requests
+    for index, slide in enumerate(presentation):
+        create_audio(index, slide, output)
+        # progress.advance(task)
 
 
 def slide_gen(prompt: str, output: str):

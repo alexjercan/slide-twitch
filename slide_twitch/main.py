@@ -27,7 +27,7 @@ load_dotenv()
 LOG_LEVEL = os.getenv("APPLICATION_LOG_LEVEL", "DEBUG")
 LOG_FILE = os.getenv("APPLICATION_LOG_FILE", "app.log")
 
-rich_handler = RichHandler()
+rich_handler = RichHandler(rich_tracebacks=True)
 file_handler = logging.FileHandler(LOG_FILE)
 file_handler.setFormatter(
     logging.Formatter(
@@ -594,16 +594,16 @@ async def slide_gen_task(cmd: ChatCommand, output: str):
         await loop.run_in_executor(executor, slide_gen, cmd.parameter, output)
 
 
-async def setup_obs(client: obs.ReqClient):
+async def setup_obs() -> obs.ReqClient:
     """Setup OBS
 
     This function will setup OBS for the presentation. It will create a new
     scene called `Presentation` and will add a VLC source called `vlc_source`
     to the scene. It will also mute the `Mic/Aux` and `Desktop Audio` inputs.
 
-    Parameters
+    Returns
     ----------
-    client : obs.ReqClient
+    obs.ReqClient
         The OBS client to use
 
     Raises
@@ -611,6 +611,12 @@ async def setup_obs(client: obs.ReqClient):
     Exception
         If could not setup OBS
     """
+    client = obs.ReqClient(
+        host=OBS_WEBSOCKET_IP,
+        port=OBS_WEBSOCKET_PORT,
+        password=OBS_WEBSOCKET_PASSWORD,
+    )
+
     result = client.get_scene_list()
     scenes = result.scenes
     if "Presentation" in [scene["sceneName"] for scene in scenes]:
@@ -666,6 +672,8 @@ async def setup_obs(client: obs.ReqClient):
 
     client.set_input_mute("Mic/Aux", True)
     client.set_input_mute("Desktop Audio", True)
+
+    return client
 
 
 async def display_message(client: obs.ReqClient, message: str, duration: int):
@@ -786,13 +794,14 @@ async def run_bot():
     """
     presentations = asyncio.Queue(maxsize=5)
 
-    client = obs.ReqClient(
-        host=OBS_WEBSOCKET_IP,
-        port=OBS_WEBSOCKET_PORT,
-        password=OBS_WEBSOCKET_PASSWORD,
-    )
-
-    await setup_obs(client)
+    try:
+        client = await setup_obs()
+    except ConnectionRefusedError:
+        logger.error("Failed to connect to OBS. Is it running?")
+        return
+    except Exception as exc:
+        logger.error("Failed to setup OBS: %s", exc)
+        return
 
     async def on_ready(ready_event: EventData):
         await ready_event.chat.join_room(TWITCH_TARGET_CHANNEL)
@@ -814,7 +823,7 @@ async def run_bot():
                 return
 
             await cmd.reply(
-                "Presentation queued!"
+                "Presentation queued! "
                 f"{cmd.user.name} will present '{cmd.parameter}' next!"
             )
             logger.info(

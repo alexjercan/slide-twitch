@@ -32,3 +32,6 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 79
+
+[tool.pylint]
+disable = "broad-except,too-many-statements,fixme"

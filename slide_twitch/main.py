@@ -37,7 +37,7 @@ file_handler.setFormatter(
 )
 
 logger = logging.getLogger("slide_twitch")
-logger.setLevel(logging._nameToLevel[LOG_LEVEL])
+logger.setLevel(logging.getLevelName(LOG_LEVEL))
 logger.addHandler(rich_handler)
 logger.addHandler(file_handler)
 
@@ -440,7 +440,7 @@ def create_image(index: int, slide: Dict, output: str):
     path = os.path.join(output, f"slide_{index:02d}.png")
     urllib.request.urlretrieve(image_url, path)
 
-    logger.debug(f"Slide {index}: Image '{slide['image']}'")
+    logger.debug("Slide %d: Image '%s'", index, slide["image"])
 
 
 def create_audio(index: int, slide: Dict, output: str):
@@ -477,7 +477,9 @@ def create_audio(index: int, slide: Dict, output: str):
     path = os.path.join(output, f"slide_{index:02d}.wav")
     fk_you.say(slide["text"], slide["speaker"]).save(path)
 
-    logger.debug(f"Slide {index}: TTS ({slide['speaker']}) '{slide['text']}'")
+    logger.debug(
+        "Slide %d: TTS (%s) '%s'", index, slide["speaker"], slide["text"]
+    )
 
 
 def create_slides(
@@ -654,12 +656,12 @@ async def setup_obs(client: obs.ReqClient):
 
     response = client.get_scene_item_id("Presentation", "VLC Video Source")
     item_id = response.scene_item_id
-    positionX = (1920 - 1024) / 2
-    positionY = (1080 - 1024) / 2
+    position_x = (1920 - 1024) / 2
+    position_y = (1080 - 1024) / 2
     client.set_scene_item_transform(
         "Presentation",
         item_id,
-        {"positionX": positionX, "positionY": positionY},
+        {"positionX": position_x, "positionY": position_y},
     )
 
     client.set_input_mute("Mic/Aux", True)
@@ -703,12 +705,12 @@ async def display_message(client: obs.ReqClient, message: str, duration: int):
     transform = response.scene_item_transform
     source_width = transform["sourceWidth"]
     source_height = transform["sourceHeight"]
-    positionX = (1920 - source_width) / 2
-    positionY = (1080 - source_height) / 2
+    position_x = (1920 - source_width) / 2
+    position_y = (1080 - source_height) / 2
     client.set_scene_item_transform(
         "Presentation",
         item_id,
-        {"positionX": positionX, "positionY": positionY},
+        {"positionX": position_x, "positionY": position_y},
     )
 
     await asyncio.sleep(duration)
@@ -752,7 +754,7 @@ async def play_run(client: obs.ReqClient, run: int):
 
     path = os.path.join(OUTPUT, str(run), "video.mp4")
 
-    assert os.path.exists(path), "Video file does not exist for run %s" % run
+    assert os.path.exists(path), f"Video file does not exist for run {run}"
 
     client.set_input_settings(
         "VLC Video Source",
@@ -879,7 +881,9 @@ async def run_bot():
     twitch = await Twitch(TWITCH_APP_ID, TWITCH_APP_SECRET)
     auth = UserAuthenticator(twitch, TWITCH_USER_SCOPE)
     token, refresh_token = await auth.authenticate()
-    await twitch.set_user_authentication(token, TWITCH_USER_SCOPE, refresh_token)
+    await twitch.set_user_authentication(
+        token, TWITCH_USER_SCOPE, refresh_token
+    )
 
     chat = await Chat(twitch)
 

@@ -98,6 +98,15 @@ def get_output_run(output: str = OUTPUT) -> int:
     -------
     int
         The run number
+
+    Raises
+    ------
+    OSError
+        If could not create the run directory
+    AssertionError
+        If the run directory already exists
+    Exception
+        If anything else goes wrong
     """
     if not os.path.exists(output):
         os.mkdir(output)
@@ -211,6 +220,17 @@ def create_srt(output: str):
     ----------
     output : str
         The output directory to use for the files
+
+    Raises
+    ------
+    FileNotFoundError
+        If the presentation file does not exist
+    ValueError
+        If the number of slides and audio files is not the same
+    OSError
+        If the presentation file cannot be opened
+    Exception
+        If anything else goes wrong
     """
     logger.debug("Creating srt...")
 
@@ -220,6 +240,9 @@ def create_srt(output: str):
         os.path.join(output, "presentation.json"), "r", encoding="utf-8"
     ) as file:
         presentation = json.load(file)
+
+    if len(presentation) != len(audio_files):
+        raise ValueError("Number of slides and audio files must be same")
 
     with open(
         os.path.join(output, "video.srt"), "w", encoding="utf-8"
@@ -280,6 +303,17 @@ def create_vtt(output: str):
     ----------
     output : str
         The output directory to use for the files
+
+    Raises
+    ------
+    FileNotFoundError
+        If the presentation file does not exist
+    ValueError
+        If the number of slides and audio files is not the same
+    OSError
+        If the presentation file cannot be opened
+    Exception
+        If anything else goes wrong
     """
     logger.debug("Creating vtt...")
 
@@ -289,6 +323,9 @@ def create_vtt(output: str):
         os.path.join(output, "presentation.json"), "r", encoding="utf-8"
     ) as file:
         presentation = json.load(file)
+
+    if len(presentation) != len(audio_files):
+        raise ValueError("Number of slides and audio files must be same")
 
     with open(
         os.path.join(output, "video.vtt"), "w", encoding="utf-8"
@@ -336,6 +373,13 @@ def create_script(prompt: str, output: str) -> Dict:
     -------
     Dict
         The presentation script
+
+    Raises
+    ------
+    IndexError
+        If the response is empty
+    Exception
+        If anything else goes wrong
     """
     response = openai.ChatCompletion.create(
         api_key=OPENAI_API_KEY,
@@ -375,6 +419,15 @@ def create_image(index: int, slide: Dict, output: str):
         The slide to create the image for
     output : str
         The output directory to use for the files
+
+    Raises
+    ------
+    IndexError
+        If the response is empty
+    OSError
+        If something goes wrong with the image download
+    Exception
+        If anything else goes wrong
     """
     response = openai.Image.create(
         prompt=slide["image"],
@@ -404,6 +457,13 @@ def create_audio(index: int, slide: Dict, output: str):
         The slide to create the audio for
     output : str
         The output directory to use for the files
+
+    Raises
+    ------
+    OSError
+        If something goes wrong with the audio download
+    Exception
+        If anything else goes wrong
     """
     fk_you = fakeyou.FakeYou()
 
@@ -436,6 +496,11 @@ def create_slides(
         The user prompt to use
     output : str, optional
         The output directory to use for the files, by default os.path.curdir
+
+    Raises
+    ------
+    Exception
+        If could not create the slides
     """
     with open(
         os.path.join(output, "prompt.txt"), "w", encoding="utf-8"
@@ -460,12 +525,8 @@ def create_slides(
                 )
 
             for future in concurrent.futures.as_completed(futures):
-                try:
-                    _ = future.result()
-                except Exception as exc:
-                    logger.error("Slide creation failed: %s", exc)
-                finally:
-                    progress.advance(task)
+                _ = future.result()
+                progress.advance(task)
 
         # TODO: Will have to make this concurrent too for speed
         # FakeYou is kind of trash and needs to use serial requests
@@ -487,10 +548,24 @@ def slide_gen(prompt: str, output: str):
         The user prompt to use
     output : str
         The output directory to use for the files
+
+    Raises
+    ------
+    Exception
+        If could not create the slides
     """
     create_slides(prompt, output=output)
-    create_srt(output)
-    create_vtt(output)
+
+    try:
+        create_srt(output)
+    except Exception as exc:
+        logger.warning("SRT creation failed: %s", exc)
+
+    try:
+        create_vtt(output)
+    except Exception as exc:
+        logger.warning("VTT creation failed: %s", exc)
+
     create_video(output)
 
 
@@ -505,6 +580,11 @@ async def slide_gen_task(cmd: ChatCommand, output: str):
         The command to use for the user prompt
     output : str
         The output directory to use for the files
+
+    Raises
+    ------
+    Exception
+        If could not create the slides
     """
     loop = asyncio.get_event_loop()
 
@@ -523,6 +603,11 @@ async def setup_obs(client: obs.ReqClient):
     ----------
     client : obs.ReqClient
         The OBS client to use
+
+    Raises
+    ------
+    Exception
+        If could not setup OBS
     """
     result = client.get_scene_list()
     scenes = result.scenes
@@ -596,6 +681,11 @@ async def display_message(client: obs.ReqClient, message: str, duration: int):
         The message to display
     duration : int
         The duration to display the message for in seconds
+
+    Raises
+    ------
+    Exception
+        If could not display the message
     """
     client.set_input_settings(
         "Text (FreeType 2)",
@@ -644,15 +734,25 @@ async def play_run(client: obs.ReqClient, run: int):
         The OBS client to use
     run : int
         The run number to play
+
+    Raises
+    ------
+    Exception
+        If could not play the video
     """
     path = os.path.join(OUTPUT, str(run), "prompt.txt")
 
     with open(path, "r", encoding="utf-8") as file:
         prompt = file.read()
 
-    await display_message(client, prompt, 3)
+    try:
+        await display_message(client, prompt, 3)
+    except Exception as exc:
+        logger.warning("Failed to display message: %s", exc)
 
     path = os.path.join(OUTPUT, str(run), "video.mp4")
+
+    assert os.path.exists(path), "Video file does not exist for run %s" % run
 
     client.set_input_settings(
         "VLC Video Source",
@@ -705,7 +805,11 @@ async def run_bot():
                 "Presentation queue is full, %s skipped", cmd.user.name
             )
         else:
-            run = get_output_run()
+            try:
+                run = get_output_run()
+            except Exception as exc:
+                logger.error("Failed to get run: %s", exc)
+                return
 
             await cmd.reply(
                 "Presentation queued!"
@@ -717,30 +821,57 @@ async def run_bot():
 
             output = os.path.join(OUTPUT, str(run))
 
-            await slide_gen_task(cmd, output)
-            await presentations.put(run)
+            try:
+                await slide_gen_task(cmd, output)
+            except Exception as exc:
+                logger.error("Failed to create slides: %s", exc)
+                return
+
+            try:
+                await presentations.put(run)
+            except Exception as exc:
+                logger.error("Failed to add run to queue: %s", exc)
 
     async def presentation_task():
         while True:
-            run = await presentations.get()
+            try:
+                run = await presentations.get()
+            except Exception as exc:
+                logger.error("Failed to get run from queue: %s", exc)
+                continue
 
             logger.info("Starting presentation for run %s...", run)
 
-            await play_run(client, run)
+            try:
+                await play_run(client, run)
+            except Exception as exc:
+                logger.error("Failed to play run: %s", exc)
+                continue
 
-            presentations.task_done()
+            try:
+                presentations.task_done()
+            except Exception as exc:
+                logger.error("Failed to mark run as done: %s", exc)
 
     async def random_presentation():
         while True:
             if presentations.empty():
-                run = get_random_run()
+                try:
+                    run = get_random_run()
+                except Exception as exc:
+                    logger.error("Failed to get random run: %s", exc)
+                    continue
 
                 if run is not None:
                     logger.info(
                         "Starting random presentation for run %s...", run
                     )
 
-                    await play_run(client, run)
+                    try:
+                        await play_run(client, run)
+                    except Exception as exc:
+                        logger.error("Failed to play run: %s", exc)
+                        continue
 
     presentation_task = asyncio.create_task(presentation_task())
     random_presentation_task = asyncio.create_task(random_presentation())

@@ -134,6 +134,11 @@ def get_random_run(output: str = OUTPUT) -> Optional[int]:
     -------
     Optional[int]
         The run number or None if no runs exist
+
+    Raises
+    ------
+    Exception
+        If anything else goes wrong
     """
     if not os.path.exists(output):
         return None
@@ -183,7 +188,7 @@ def create_video(output: str):
     ffmpeg.concat(*input_streams, v=1, a=1).output(
         os.path.join(output, "video.mp4"),
         pix_fmt="yuv420p",
-        loglevel="quiet",
+        # loglevel="quiet",
     ).overwrite_output().run()
 
 
@@ -560,13 +565,13 @@ def slide_gen(prompt: str, output: str):
 
     try:
         create_srt(output)
-    except Exception as exc:
-        logger.warning("SRT creation failed: %s", exc)
+    except Exception:
+        logger.warning("SRT creation failed")
 
     try:
         create_vtt(output)
-    except Exception as exc:
-        logger.warning("VTT creation failed: %s", exc)
+    except Exception:
+        logger.warning("VTT creation failed")
 
     create_video(output)
 
@@ -624,7 +629,7 @@ async def setup_obs() -> obs.ReqClient:
 
     # TODO: Can this be fixed?
     # Needed to wait for OBS to update the scene list... UGH!
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.5)
 
     client.create_scene("Presentation")
 
@@ -755,10 +760,7 @@ async def play_run(client: obs.ReqClient, run: int):
     with open(path, "r", encoding="utf-8") as file:
         prompt = file.read()
 
-    try:
-        await display_message(client, prompt, 3)
-    except Exception as exc:
-        logger.warning("Failed to display message: %s", exc)
+    await display_message(client, prompt, 3)
 
     path = os.path.join(OUTPUT, str(run), "video.mp4")
 
@@ -799,9 +801,6 @@ async def run_bot():
     except ConnectionRefusedError:
         logger.error("Failed to connect to OBS. Is it running?")
         return
-    except Exception as exc:
-        logger.error("Failed to setup OBS: %s", exc)
-        return
 
     async def on_ready(ready_event: EventData):
         await ready_event.chat.join_room(TWITCH_TARGET_CHANNEL)
@@ -816,11 +815,7 @@ async def run_bot():
                 "Presentation queue is full, %s skipped", cmd.user.name
             )
         else:
-            try:
-                run = get_output_run()
-            except Exception as exc:
-                logger.error("Failed to get run: %s", exc)
-                return
+            run = get_output_run()
 
             await cmd.reply(
                 "Presentation queued! "
@@ -832,57 +827,35 @@ async def run_bot():
 
             output = os.path.join(OUTPUT, str(run))
 
-            try:
-                await slide_gen_task(cmd, output)
-            except Exception as exc:
-                logger.error("Failed to create slides: %s", exc)
-                return
-
-            try:
-                await presentations.put(run)
-            except Exception as exc:
-                logger.error("Failed to add run to queue: %s", exc)
+            await slide_gen_task(cmd, output)
+            await presentations.put(run)
 
     async def presentation_task():
         while True:
-            try:
-                run = await presentations.get()
-            except Exception as exc:
-                logger.error("Failed to get run from queue: %s", exc)
-                continue
+            run = await presentations.get()
 
             logger.info("Starting presentation for run %s...", run)
 
             try:
                 await play_run(client, run)
-            except Exception as exc:
-                logger.error("Failed to play run: %s", exc)
-                continue
-
-            try:
+            except Exception:
+                logger.error("Failed to play run: %s", run)
+            finally:
                 presentations.task_done()
-            except Exception as exc:
-                logger.error("Failed to mark run as done: %s", exc)
 
     async def random_presentation():
         while True:
             if presentations.empty():
-                try:
-                    run = get_random_run()
-                except Exception as exc:
-                    logger.error("Failed to get random run: %s", exc)
-                    continue
+                run = get_random_run()
 
                 if run is not None:
                     logger.info(
                         "Starting random presentation for run %s...", run
                     )
 
-                    try:
-                        await play_run(client, run)
-                    except Exception as exc:
-                        logger.error("Failed to play run: %s", exc)
-                        continue
+                    await presentations.put(run)
+            else:
+                await asyncio.sleep(1)
 
     presentation_task = asyncio.create_task(presentation_task())
     random_presentation_task = asyncio.create_task(random_presentation())

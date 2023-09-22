@@ -365,7 +365,12 @@ def slide_gen(
             "[yellow]Generating script", total=None
         )
 
-    presentation = create_script(prompt, output)
+    try:
+        presentation = create_script(prompt, output)
+    except Exception:
+        if progress is not None:
+            progress.remove_task(presentation_job)
+        raise
 
     if progress is not None:
         progress.update(presentation_job, completed=1, total=1)
@@ -379,14 +384,28 @@ def slide_gen(
             futures.append(executor.submit(create_image, index, slide, output))
 
         for future in concurrent.futures.as_completed(futures):
-            _ = future.result()
+            try:
+                _ = future.result()
+            except Exception:
+                if progress is not None:
+                    progress.remove_task(presentation_job)
+                    progress.remove_task(slides_job)
+                raise
+
             if progress is not None:
                 progress.advance(slides_job)
 
     # TODO: Will have to make this concurrent too for speed
     # FakeYou is kind of trash and needs to use serial requests
     for index, slide in enumerate(presentation):
-        create_audio(index, slide, output)
+        try:
+            create_audio(index, slide, output)
+        except Exception:
+            if progress is not None:
+                progress.remove_task(presentation_job)
+                progress.remove_task(slides_job)
+            raise
+
         if progress is not None:
             progress.advance(slides_job)
 

@@ -133,15 +133,22 @@ class SlideBot:
             )
 
             loop = asyncio.get_event_loop()
-
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                await loop.run_in_executor(
-                    executor,
-                    slide_gen,
-                    cmd.parameter,
-                    output,
-                    self.job_progress,
-                )
+                try:
+                    await loop.run_in_executor(
+                        executor,
+                        slide_gen,
+                        cmd.parameter,
+                        output,
+                        self.job_progress,
+                    )
+                except Exception:
+                    await cmd.reply(
+                        "Failed to generate video! "
+                        "Either NSFW or streamer out of money."
+                    )
+                    logger.exception("Failed to generate video")
+                    return
 
             await self.presentations.put(run)
 

@@ -114,7 +114,10 @@ class SlideBot:
             The chat command data
         """
         if len(cmd.parameter) == 0:
-            await cmd.reply("You need to specify a message to present!")
+            await cmd.reply(
+                "You need to specify a message to present! "
+                "For example `!present how to make a sandwich`"
+            )
         elif self.presentations.full():
             await cmd.reply("Presentation queue is full, try again later!")
             logger.warning(
